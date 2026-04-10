@@ -27,22 +27,8 @@ type PgDBConfig struct {
 	SSLMode             string `yaml:"SSLMode"`
 }
 
-func NewPgDBConfig(host string, port int, user string, password string, dbName string, maxConns int, minConns int, connMaxLifetime int, connMaxIdleTime int, healthCheckInterval int, execTimeout int, queryTimeout int, sslMode string) *PgDBConfig {
-	return &PgDBConfig{
-		Host:                host,
-		Port:                port,
-		User:                user,
-		Password:            password,
-		DBName:              dbName,
-		MaxConns:            maxConns,
-		MinConns:            minConns,
-		ConnMaxLifetime:     connMaxLifetime,
-		ConnMaxIdleTime:     connMaxIdleTime,
-		HealthCheckInterval: healthCheckInterval,
-		ExecTimeout:         execTimeout,
-		QueryTimeout:        queryTimeout,
-		SSLMode:             sslMode,
-	}
+func NewPgDBConfig() *PgDBConfig {
+	return &PgDBConfig{}
 }
 
 type poolIface interface {
