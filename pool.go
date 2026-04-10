@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type Config struct {
+type PgDBConfig struct {
 	Host                string `yaml:"Host"`
 	Port                int    `yaml:"Port"`
 	User                string `yaml:"User"`
@@ -27,8 +27,8 @@ type Config struct {
 	SSLMode             string `yaml:"SSLMode"`
 }
 
-func NewConfig(host string, port int, user string, password string, dbName string, maxConns int, minConns int, connMaxLifetime int, connMaxIdleTime int, healthCheckInterval int, execTimeout int, queryTimeout int, sslMode string) *Config {
-	return &Config{
+func NewPgDBConfig(host string, port int, user string, password string, dbName string, maxConns int, minConns int, connMaxLifetime int, connMaxIdleTime int, healthCheckInterval int, execTimeout int, queryTimeout int, sslMode string) *PgDBConfig {
+	return &PgDBConfig{
 		Host:                host,
 		Port:                port,
 		User:                user,
@@ -61,7 +61,7 @@ type PgxDB struct {
 	queryTimeout time.Duration
 }
 
-func NewPgxDB(cfg *Config) (*PgxDB, error) {
+func NewPgxDB(cfg *PgDBConfig) (*PgxDB, error) {
 	// 密码 URL 编码防特殊字符注入
 	encodedPassword := url.QueryEscape(cfg.Password)
 
