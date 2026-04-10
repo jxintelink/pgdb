@@ -27,6 +27,24 @@ type Config struct {
 	SSLMode             string `yaml:"SSLMode"`
 }
 
+func NewConfig(host string, port int, user string, password string, dbName string, maxConns int, minConns int, connMaxLifetime int, connMaxIdleTime int, healthCheckInterval int, execTimeout int, queryTimeout int, sslMode string) *Config {
+	return &Config{
+		Host:                host,
+		Port:                port,
+		User:                user,
+		Password:            password,
+		DBName:              dbName,
+		MaxConns:            maxConns,
+		MinConns:            minConns,
+		ConnMaxLifetime:     connMaxLifetime,
+		ConnMaxIdleTime:     connMaxIdleTime,
+		HealthCheckInterval: healthCheckInterval,
+		ExecTimeout:         execTimeout,
+		QueryTimeout:        queryTimeout,
+		SSLMode:             sslMode,
+	}
+}
+
 type poolIface interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
