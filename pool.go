@@ -41,6 +41,58 @@ type poolIface interface {
 	Close()
 }
 
+type poolAcquireIface interface {
+	Acquire(ctx context.Context) (*pgxpool.Conn, error)
+}
+
+type pooledConn struct {
+	conn *pgxpool.Conn
+}
+
+func (c *pooledConn) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	ct, err := c.conn.Exec(ctx, sql, args...)
+	return ct.RowsAffected(), err
+}
+
+func (c *pooledConn) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return c.conn.QueryRow(ctx, sql, args...)
+}
+
+func (c *pooledConn) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return c.conn.Query(ctx, sql, args...)
+}
+
+func (c *pooledConn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return c.conn.CopyFrom(ctx, tableName, columnNames, rowSrc)
+}
+
+func (c *pooledConn) Release() {
+	c.conn.Release()
+}
+
+type sharedConn struct {
+	pool poolIface
+}
+
+func (c *sharedConn) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
+	ct, err := c.pool.Exec(ctx, sql, args...)
+	return ct.RowsAffected(), err
+}
+
+func (c *sharedConn) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	return c.pool.QueryRow(ctx, sql, args...)
+}
+
+func (c *sharedConn) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return c.pool.Query(ctx, sql, args...)
+}
+
+func (c *sharedConn) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
+	return c.pool.CopyFrom(ctx, tableName, columnNames, rowSrc)
+}
+
+func (c *sharedConn) Release() {}
+
 type PgxDB struct {
 	Pool         poolIface
 	execTimeout  time.Duration
@@ -118,6 +170,29 @@ func (db *PgxDB) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnN
 	defer cancel()
 
 	return db.Pool.CopyFrom(ctx, tableName, columnNames, rowSrc)
+}
+
+func (db *PgxDB) AcquireConn(ctx context.Context) (Conn, error) {
+	ctx, cancel := db.getCtxWithTimeout(ctx, db.queryTimeout)
+	defer cancel()
+
+	// 优先从连接池获取独立连接，适合显式获取/释放场景。
+	if acquirer, ok := db.Pool.(poolAcquireIface); ok {
+		conn, err := acquirer.Acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return &pooledConn{conn: conn}, nil
+	}
+
+	// 非池化实现退化为共享连接，Release 为 no-op。
+	return &sharedConn{pool: db.Pool}, nil
+}
+
+func (db *PgxDB) ReleaseConn(conn Conn) {
+	if conn != nil {
+		conn.Release()
+	}
 }
 
 func (db *PgxDB) WithTx(ctx context.Context, fn func(tx Tx) error) error {

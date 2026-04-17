@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pashagolub/pgxmock/v3"
 )
 
@@ -178,5 +180,86 @@ func TestPgxDB_Close(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %s", err)
+	}
+}
+
+type noAcquirePoolStub struct {
+	execCalled bool
+}
+
+func (s *noAcquirePoolStub) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	s.execCalled = true
+	return pgconn.NewCommandTag("INSERT 1"), nil
+}
+
+func (s *noAcquirePoolStub) QueryRow(context.Context, string, ...any) pgx.Row {
+	return nil
+}
+
+func (s *noAcquirePoolStub) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+
+func (s *noAcquirePoolStub) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, nil
+}
+
+func (s *noAcquirePoolStub) Begin(context.Context) (pgx.Tx, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *noAcquirePoolStub) Ping(context.Context) error {
+	return nil
+}
+
+func (s *noAcquirePoolStub) Close() {}
+
+type acquireErrPoolStub struct {
+	noAcquirePoolStub
+}
+
+func (s *acquireErrPoolStub) Acquire(context.Context) (*pgxpool.Conn, error) {
+	return nil, errors.New("acquire failed")
+}
+
+// 6. 非池化场景下也能获取/释放抽象连接
+func TestPgxDB_AcquireReleaseConn_Fallback(t *testing.T) {
+	pool := &noAcquirePoolStub{}
+	db := &PgxDB{Pool: pool}
+
+	conn, err := db.AcquireConn(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireConn failed: %v", err)
+	}
+	if conn == nil {
+		t.Fatal("expected non-nil connection")
+	}
+
+	affected, err := conn.Exec(context.Background(), "INSERT INTO t_cdrs VALUES (1)")
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+	if affected != 1 {
+		t.Fatalf("expected affected rows 1, got %d", affected)
+	}
+	if !pool.execCalled {
+		t.Fatal("expected Exec to delegate to underlying pool iface")
+	}
+
+	// fallback 连接 Release 为 no-op，不应 panic。
+	db.ReleaseConn(conn)
+	db.ReleaseConn(nil)
+}
+
+// 7. 池化实现获取失败时应返回错误
+func TestPgxDB_AcquireConn_Error(t *testing.T) {
+	db := &PgxDB{Pool: &acquireErrPoolStub{}}
+
+	conn, err := db.AcquireConn(context.Background())
+	if err == nil {
+		t.Fatal("expected acquire error but got nil")
+	}
+	if conn != nil {
+		t.Fatal("expected nil connection on acquire error")
 	}
 }
