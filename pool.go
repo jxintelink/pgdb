@@ -153,15 +153,14 @@ func (db *PgxDB) Exec(ctx context.Context, sql string, args ...any) (int64, erro
 }
 
 func (db *PgxDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	ctx, cancel := db.getCtxWithTimeout(ctx, db.queryTimeout)
-	defer cancel() // 注意：pgx.Row 会在 Scan() 时执行查询，这里的 defer 取决于底层实现，pgx5 中是安全的
+	// QueryRow 在 Scan() 时才真正执行，不能在这里提前 cancel context。
+	// 超时控制应由调用方显式创建 context.WithTimeout 后传入。
 	return db.Pool.QueryRow(ctx, sql, args...)
 }
 
 func (db *PgxDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	ctx, cancel := db.getCtxWithTimeout(ctx, db.queryTimeout)
-	defer cancel()
-
+	// Query 返回后调用方仍需持续消费 rows，不能在库内提前 cancel context。
+	// 超时控制应由调用方显式创建 context.WithTimeout 后传入。
 	return db.Pool.Query(ctx, sql, args...)
 }
 
@@ -245,16 +244,12 @@ func (t *pgxTx) Exec(ctx context.Context, sql string, args ...any) (int64, error
 }
 
 func (t *pgxTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	ctx, cancel := t.db.getCtxWithTimeout(ctx, t.db.queryTimeout)
-	defer cancel()
-
+	// 事务中的 QueryRow 同样需要由调用方控制 context 生命周期。
 	return t.tx.QueryRow(ctx, sql, args...)
 }
 
 func (t *pgxTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	ctx, cancel := t.db.getCtxWithTimeout(ctx, t.db.queryTimeout)
-	defer cancel()
-
+	// 事务中的 Query 同样不能在返回 rows 之前提前 cancel context。
 	return t.tx.Query(ctx, sql, args...)
 }
 
