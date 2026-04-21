@@ -22,8 +22,6 @@ type PgDBConfig struct {
 	ConnMaxLifetime     int    `yaml:"ConnMaxLifetime"`
 	ConnMaxIdleTime     int    `yaml:"ConnMaxIdleTime"`
 	HealthCheckInterval int    `yaml:"HealthCheckInterval"`
-	ExecTimeout         int    `yaml:"ExecTimeout"`
-	QueryTimeout        int    `yaml:"QueryTimeout"`
 	SSLMode             string `yaml:"SSLMode"`
 }
 
@@ -130,22 +128,17 @@ func NewPgxDB(cfg *PgDBConfig) (*PgxDB, error) {
 	}
 
 	return &PgxDB{
-		Pool:         pool,
-		execTimeout:  time.Duration(cfg.ExecTimeout) * time.Second,
-		queryTimeout: time.Duration(cfg.QueryTimeout) * time.Second,
+		Pool: pool,
 	}, nil
 }
 
-// 内部工具：生成带超时的 context
-func (db *PgxDB) getCtxWithTimeout(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout > 0 {
-		return context.WithTimeout(ctx, timeout)
-	}
-	return ctx, func() {} // 返回一个空操作的 cancel
+// 内部工具：直接复用调用方 context，不再附加库内超时。
+func (db *PgxDB) getCtxWithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	return ctx, func() {}
 }
 
 func (db *PgxDB) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
-	ctx, cancel := db.getCtxWithTimeout(ctx, db.execTimeout)
+	ctx, cancel := db.getCtxWithTimeout(ctx)
 	defer cancel()
 
 	ct, err := db.Pool.Exec(ctx, sql, args...)
@@ -153,26 +146,26 @@ func (db *PgxDB) Exec(ctx context.Context, sql string, args ...any) (int64, erro
 }
 
 func (db *PgxDB) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	// QueryRow 在 Scan() 时才真正执行，不能在这里提前 cancel context。
-	// 超时控制应由调用方显式创建 context.WithTimeout 后传入。
+	ctx, cancel := db.getCtxWithTimeout(ctx)
+	defer cancel()
 	return db.Pool.QueryRow(ctx, sql, args...)
 }
 
 func (db *PgxDB) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	// Query 返回后调用方仍需持续消费 rows，不能在库内提前 cancel context。
-	// 超时控制应由调用方显式创建 context.WithTimeout 后传入。
+	ctx, cancel := db.getCtxWithTimeout(ctx)
+	defer cancel()
 	return db.Pool.Query(ctx, sql, args...)
 }
 
 func (db *PgxDB) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
-	ctx, cancel := db.getCtxWithTimeout(ctx, db.execTimeout)
+	ctx, cancel := db.getCtxWithTimeout(ctx)
 	defer cancel()
 
 	return db.Pool.CopyFrom(ctx, tableName, columnNames, rowSrc)
 }
 
 func (db *PgxDB) AcquireConn(ctx context.Context) (Conn, error) {
-	ctx, cancel := db.getCtxWithTimeout(ctx, db.queryTimeout)
+	ctx, cancel := db.getCtxWithTimeout(ctx)
 	defer cancel()
 
 	// 优先从连接池获取独立连接，适合显式获取/释放场景。
@@ -236,7 +229,7 @@ type pgxTx struct {
 }
 
 func (t *pgxTx) Exec(ctx context.Context, sql string, args ...any) (int64, error) {
-	ctx, cancel := t.db.getCtxWithTimeout(ctx, t.db.execTimeout)
+	ctx, cancel := t.db.getCtxWithTimeout(ctx)
 	defer cancel()
 
 	ct, err := t.tx.Exec(ctx, sql, args...)
@@ -244,17 +237,19 @@ func (t *pgxTx) Exec(ctx context.Context, sql string, args ...any) (int64, error
 }
 
 func (t *pgxTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	// 事务中的 QueryRow 同样需要由调用方控制 context 生命周期。
+	ctx, cancel := t.db.getCtxWithTimeout(ctx)
+	defer cancel()
 	return t.tx.QueryRow(ctx, sql, args...)
 }
 
 func (t *pgxTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	// 事务中的 Query 同样不能在返回 rows 之前提前 cancel context。
+	ctx, cancel := t.db.getCtxWithTimeout(ctx)
+	defer cancel()
 	return t.tx.Query(ctx, sql, args...)
 }
 
 func (t *pgxTx) CopyFrom(ctx context.Context, tableName pgx.Identifier, columnNames []string, rowSrc pgx.CopyFromSource) (int64, error) {
-	ctx, cancel := t.db.getCtxWithTimeout(ctx, t.db.execTimeout)
+	ctx, cancel := t.db.getCtxWithTimeout(ctx)
 	defer cancel()
 
 	return t.tx.CopyFrom(ctx, tableName, columnNames, rowSrc)
