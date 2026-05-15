@@ -1,4 +1,4 @@
-module pgdb
+module github.com/jxintelink/pgdb
 
 go 1.25.10
 
